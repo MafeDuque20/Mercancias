@@ -20,7 +20,8 @@
             border-radius: 20px;
         }
         .toggle-agrupacion.active { background: var(--dg-green); color: white; border-color: var(--dg-green); }
-        .chart-box { height: 280px; }
+        .chart-box { height: 280px; position: relative; }
+        .chart-empty-msg { display: none; }
     </style>
 </head>
 <body>
@@ -85,11 +86,17 @@
                         <span class="status-dot status-loading"></span> Conectando...
                     </span>
                 </div>
-                <div class="col-md-8 text-md-end">
+                <div class="col-md-4 mb-2 mb-md-0 text-md-end text-start">
                     <small class="text-muted d-block">Total registros analizados</small>
                     <span id="totalFilteredRecords" class="fw-bold fs-5 text-dark mono">0</span>
                 </div>
+                <div class="col-md-4 text-md-end">
+                    <button class="btn btn-sm btn-outline-navy" id="btnActualizarDatosAnalitica" onclick="actualizarDatosAnalitica()">
+                        <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos
+                    </button>
+                </div>
             </div>
+            <div id="loadErrorPanel" class="d-none mt-3 pt-3" style="border-top:1px solid var(--line);"></div>
         </div>
 
         <!-- ================= FILTROS ================= -->

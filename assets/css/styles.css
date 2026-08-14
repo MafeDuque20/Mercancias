@@ -343,6 +343,7 @@ body {
 .status-online { background-color: var(--dg-green); box-shadow: 0 0 0 3px var(--dg-green-soft); }
 .status-offline { background-color: var(--dg-red); box-shadow: 0 0 0 3px var(--dg-red-soft); }
 .status-loading { background-color: var(--dg-yellow); box-shadow: 0 0 0 3px var(--dg-yellow-soft); animation: tdcPulse 1.1s ease-in-out infinite; }
+.status-partial { background-color: var(--dg-yellow); box-shadow: 0 0 0 3px var(--dg-yellow-soft); }
 @keyframes tdcPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .tdc-loading-row { animation: tdcPulse 1.3s ease-in-out infinite; }
 

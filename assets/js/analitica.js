@@ -1,26 +1,127 @@
 // ==========================================================================
 // TALMA DATA CENTER — Analítica (analitica.html)
 // ==========================================================================
-import { colRef } from "./firebase-config.js";
-import { onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { uniqueSorted, getSemestre, getPeriodoLabel, parseHorasNumero, debounce } from "./utils.js";
+import { colRef, CAMPOS } from "./firebase-config.js";
+import { onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { uniqueSorted, getSemestre, getPeriodoLabel, parseHorasNumero, debounce, normalizarRegistroFirestore } from "./utils.js";
 
 let allData = [];
 let charts = {};
 let agrupacionAsistencia = 'BASE'; // BASE | GRUPO
+let unsubscribe = null;
 
 const PALETA = ['#0b7a40', '#0b3d62', '#1c6fa8', '#3fa869', '#124a76', '#7fb3e0', '#8a94a6', '#5b7fa6'];
 
-/* ============================== CONEXIÓN ============================== */
-onSnapshot(colRef, (snapshot) => {
-  allData = snapshot.docs.map(d => d.data());
-  document.getElementById('connectionBadge').innerHTML = '<span class="status-dot status-online"></span> Conectado a la nube';
-  poblarFiltrosDinamicos();
-  procesarDatosAnalitica();
-}, (error) => {
-  console.error(error);
-  document.getElementById('connectionBadge').innerHTML = '<span class="status-dot status-offline"></span> Error de conexión';
-});
+/* ============================== CONEXIÓN (mismo dataset/flujo que Operaciones) ============================== */
+function iniciarConexion() {
+  setEstadoConexion('loading');
+  console.log('[FIREBASE] (Analítica) Suscribiendo a la colección "capacitaciones"...');
+  if (typeof unsubscribe === 'function') unsubscribe();
+
+  unsubscribe = onSnapshot(colRef, (snapshot) => {
+    console.log(`[FIREBASE] (Analítica) Snapshot recibido. Documentos: ${snapshot.size}`);
+    procesarSnapshot(snapshot);
+  }, (error) => {
+    console.error('[FIREBASE] (Analítica) Error de suscripción:', error);
+    mostrarErrorCarga({
+      titulo: 'No fue posible conectar con la nube',
+      mensaje: error.message || String(error),
+      codigo: error.code || '—',
+      proceso: 'onSnapshot(capacitaciones)'
+    });
+    setEstadoConexion('error');
+  });
+}
+
+function procesarSnapshot(snapshot) {
+  document.getElementById('totalFilteredRecords').innerText = snapshot.size;
+  try {
+    const docsArray = snapshot.docs;
+    if (!Array.isArray(docsArray)) throw new Error('snapshot.docs no es un arreglo. Estructura de respuesta inesperada.');
+
+    console.log('[DATA] (Analítica) Normalizando registros...');
+    const registros = docsArray.map(d => normalizarRegistroFirestore(d.data(), CAMPOS));
+    if (!Array.isArray(registros)) throw new Error('El resultado de la normalización no es un arreglo.');
+
+    allData = registros;
+    console.log(`[DATA] (Analítica) Dataset cargado: ${allData.length} registro(s)`);
+
+    ocultarErrorCarga();
+    poblarFiltrosDinamicos();
+    procesarDatosAnalitica();
+    setEstadoConexion('online');
+  } catch (err) {
+    console.error('[DATA] (Analítica) Error procesando los registros recibidos:', err);
+    mostrarErrorCarga({
+      titulo: 'Se pudo consultar el total, pero no fue posible obtener los registros',
+      mensaje: err.message || String(err),
+      codigo: '—',
+      proceso: 'procesarSnapshot() / normalización de documentos'
+    });
+    setEstadoConexion('partial');
+  }
+}
+
+window.actualizarDatosAnalitica = async function () {
+  const btn = document.getElementById('btnActualizarDatosAnalitica');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-1"></i> Actualizando...'; }
+  setEstadoConexion('loading');
+  try {
+    const snapshot = await getDocs(colRef);
+    procesarSnapshot(snapshot);
+  } catch (err) {
+    console.error('[FIREBASE] (Analítica) Error al actualizar manualmente:', err);
+    mostrarErrorCarga({
+      titulo: 'No fue posible actualizar los datos',
+      mensaje: err.message || String(err),
+      codigo: err.code || '—',
+      proceso: 'getDocs(capacitaciones)'
+    });
+    setEstadoConexion('error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos'; }
+  }
+};
+
+window.reintentarCargaAnalitica = function () {
+  console.log('[FIREBASE] (Analítica) Reintentando conexión...');
+  iniciarConexion();
+};
+
+function setEstadoConexion(estado) {
+  const badge = document.getElementById('connectionBadge');
+  const mapa = {
+    loading: '<span class="status-dot status-loading"></span> Conectando...',
+    online: '<span class="status-dot status-online"></span> Conectado a la nube',
+    partial: '<span class="status-dot status-partial"></span> Conexión parcial',
+    error: '<span class="status-dot status-offline"></span> Error de conexión'
+  };
+  badge.innerHTML = mapa[estado] || mapa.error;
+}
+
+function mostrarErrorCarga({ titulo, mensaje, codigo, proceso }) {
+  const cont = document.getElementById('loadErrorPanel');
+  if (!cont) return;
+  cont.classList.remove('d-none');
+  cont.innerHTML = `
+    <div class="d-flex align-items-start gap-3">
+      <i class="fa-solid fa-triangle-exclamation" style="color:var(--dg-red); font-size:1.4rem; margin-top:2px;"></i>
+      <div class="flex-grow-1">
+        <div class="fw-bold" style="color:var(--dg-red);">${titulo}</div>
+        <div class="small mt-1" style="color:var(--ink-600);"><strong>Proceso:</strong> ${proceso}</div>
+        <div class="small" style="color:var(--ink-600);"><strong>Código:</strong> ${codigo}</div>
+        <div class="small mono mt-1" style="color:var(--ink-600); word-break:break-word;">${mensaje}</div>
+      </div>
+      <button class="btn btn-sm btn-navy" onclick="reintentarCargaAnalitica()"><i class="fa-solid fa-rotate-right me-1"></i>Reintentar</button>
+    </div>`;
+}
+
+function ocultarErrorCarga() {
+  const cont = document.getElementById('loadErrorPanel');
+  if (cont) { cont.classList.add('d-none'); cont.innerHTML = ''; }
+}
+
+iniciarConexion();
 
 function poblarFiltrosDinamicos() {
   llenarSelect('filtroBase', uniqueSorted(allData.map(d => d.BASE)));
@@ -90,6 +191,7 @@ function renderKpis(data) {
 
 /* ============================== GRÁFICOS ============================== */
 function renderGraficos(data) {
+  console.log(`[CHARTS] Generando gráficos con ${data.length} registro(s)`);
   renderAsistenciaGlobal(data);
   renderAsistenciaPorCategoria(data);
   renderDistribucion(data, 'SALON', 'chartSalones', 'Alumnos por Salón');
@@ -97,7 +199,26 @@ function renderGraficos(data) {
   renderHorasPorPeriodo(data);
 }
 
+// Muestra "No hay datos suficientes" en lugar del canvas cuando no hay
+// nada que graficar, sin romper Chart.js ni dejar un gráfico vacío/roto.
+function toggleEmptyState(canvasId, isEmpty) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  let msg = canvas.parentElement.querySelector('.chart-empty-msg');
+  if (!msg) {
+    msg = document.createElement('div');
+    msg.className = 'chart-empty-msg d-flex align-items-center justify-content-center h-100 text-muted small';
+    msg.innerHTML = '<span><i class="fa-solid fa-chart-simple me-2"></i>No hay datos suficientes</span>';
+    canvas.parentElement.appendChild(msg);
+  }
+  canvas.style.display = isEmpty ? 'none' : '';
+  msg.style.display = isEmpty ? '' : 'none';
+}
+
 function renderAsistenciaGlobal(data) {
+  toggleEmptyState('chartAsistencia', data.length === 0);
+  if (data.length === 0) { if (charts.asistencia) { charts.asistencia.destroy(); charts.asistencia = null; } return; }
+
   let asistieron = 0, noAsistieron = 0;
   data.forEach(item => (item.ASISTIO || 'SÍ').toUpperCase() === 'NO' ? noAsistieron++ : asistieron++);
 
@@ -117,6 +238,9 @@ function renderAsistenciaGlobal(data) {
 }
 
 function renderAsistenciaPorCategoria(data) {
+  toggleEmptyState('chartAsistenciaCategoria', data.length === 0);
+  if (data.length === 0) { if (charts.asistenciaCategoria) { charts.asistenciaCategoria.destroy(); charts.asistenciaCategoria = null; } return; }
+
   const campo = agrupacionAsistencia;
   const map = {};
   data.forEach(item => {
@@ -146,6 +270,9 @@ function renderAsistenciaPorCategoria(data) {
 }
 
 function renderDistribucion(data, campo, canvasId, label) {
+  toggleEmptyState(canvasId, data.length === 0);
+  if (data.length === 0) { if (charts[canvasId]) { charts[canvasId].destroy(); charts[canvasId] = null; } return; }
+
   const count = {};
   data.forEach(item => {
     const key = item[campo] || 'SIN ASIGNAR';
@@ -179,6 +306,9 @@ function renderHorasPorPeriodo(data) {
     map[periodo] = (map[periodo] || 0) + parseHorasNumero(item.INTENSIDAD);
   });
   const labels = Object.keys(map).sort();
+
+  toggleEmptyState('chartHorasPeriodo', labels.length === 0);
+  if (labels.length === 0) { if (charts.horasPeriodo) { charts.horasPeriodo.destroy(); charts.horasPeriodo = null; } return; }
 
   const ctx = document.getElementById('chartHorasPeriodo').getContext('2d');
   if (charts.horasPeriodo) charts.horasPeriodo.destroy();

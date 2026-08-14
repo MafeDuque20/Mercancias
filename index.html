@@ -87,8 +87,12 @@
                 <div class="col-md-3 mb-2 mb-md-0">
                     <small class="text-muted d-block">Total de registros en la nube</small>
                     <span id="totalRecords" class="fw-bold fs-5 text-dark mono">0</span>
+                    <small class="text-muted d-block" id="lastUpdated"></small>
                 </div>
                 <div class="col-md-6 text-md-end">
+                    <button class="btn btn-sm btn-outline-navy me-1" id="btnActualizarDatos" onclick="actualizarDatos()">
+                        <i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos
+                    </button>
                     <button class="btn btn-sm btn-outline-success me-1" onclick="exportarExcel()">
                         <i class="fa-solid fa-file-excel me-1"></i> Exportar filtro
                     </button>
@@ -100,6 +104,7 @@
                     </button>
                 </div>
             </div>
+            <div id="loadErrorPanel" class="d-none mt-3 pt-3" style="border-top:1px solid var(--line);"></div>
         </div>
 
         <!-- ================= FILTROS AVANZADOS ================= -->

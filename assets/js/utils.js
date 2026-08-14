@@ -44,6 +44,27 @@ export function showToast(message, type = "info") {
   el.addEventListener("hidden.bs.toast", () => el.remove());
 }
 
+/* ---------------------------- Normalización de valores crudos ---------------------------- */
+// Firestore puede devolver strings, numbers, booleans, null, Timestamp
+// (objetos con método toDate()), o incluso arrays/objetos si un registro
+// se guardó mal. Esta función SIEMPRE devuelve un string seguro, sin
+// lanzar excepciones, para que el resto de la app (filtros, tabla,
+// gráficos) nunca se rompa por un tipo de dato inesperado.
+export function safeStr(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  // Firestore Timestamp
+  if (typeof value === "object" && typeof value.toDate === "function") {
+    try {
+      const d = value.toDate();
+      return isNaN(d) ? "" : d.toISOString().slice(0, 10);
+    } catch { return ""; }
+  }
+  if (Array.isArray(value)) return value.map(safeStr).filter(Boolean).join(", ");
+  try { return String(value); } catch { return ""; }
+}
+
 /* ---------------------------- Normalización ---------------------------- */
 export function stripAccents(str) {
   return String(str ?? "")
@@ -61,6 +82,14 @@ export function normKey(str) {
 export function parseFechaFlexible(value) {
   if (value === null || value === undefined || value === "") {
     return { iso: "", display: "", valid: true, empty: true };
+  }
+
+  // Firestore Timestamp
+  if (typeof value === "object" && typeof value.toDate === "function") {
+    try {
+      const d = value.toDate();
+      if (!isNaN(d)) return toDateResult(d);
+    } catch { /* sigue con otros formatos */ }
   }
 
   // Excel serial date number
@@ -95,16 +124,27 @@ function toDateResult(d) {
   return { iso, display, valid, empty: false, dateObj: d };
 }
 
-export function getSemestre(iso) {
+export function getSemestre(fecha) {
+  const iso = normalizarIso(fecha);
   if (!iso) return null;
   const mes = +iso.slice(5, 7);
   return mes >= 1 && mes <= 6 ? 1 : 2;
 }
 
-export function getPeriodoLabel(iso) {
+export function getPeriodoLabel(fecha) {
+  const iso = normalizarIso(fecha);
   if (!iso) return "Sin fecha";
   const year = iso.slice(0, 4);
   return `${year}-S${getSemestre(iso)}`;
+}
+
+// Acepta string ISO, Timestamp de Firestore, número serial de Excel, etc.
+// y siempre devuelve un string "yyyy-mm-dd" o "" si no se puede determinar.
+function normalizarIso(fecha) {
+  if (!fecha) return "";
+  if (typeof fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) return fecha;
+  const f = parseFechaFlexible(fecha);
+  return f.valid && !f.empty ? f.iso : "";
 }
 
 /* ---------------------------- Validación de un registro ---------------------------- */
@@ -198,6 +238,25 @@ export function normalizarFilaExcel(rowRaw, mapaEncabezados) {
   return rec;
 }
 
+/* ---------------------------- Normalización de un doc de Firestore ---------------------------- */
+// Un documento de Firestore puede traer campos con tipos inesperados
+// (números, booleanos, Timestamps, null, arrays). Esta función garantiza
+// que el registro que usa el resto de la app SIEMPRE tenga strings
+// predecibles en cada campo conocido (CAMPOS), sin lanzar excepciones,
+// y sin perder ningún campo extra que pudiera traer el documento.
+export function normalizarRegistroFirestore(raw, campos) {
+  const out = { ...raw };
+  campos.forEach(campo => {
+    if (campo === "FECHA") {
+      const f = parseFechaFlexible(raw.FECHA);
+      out.FECHA = f.empty ? "" : (f.valid ? f.iso : safeStr(raw.FECHA));
+    } else {
+      out[campo] = safeStr(raw[campo]);
+    }
+  });
+  return out;
+}
+
 /* ---------------------------- Formato de tabla ---------------------------- */
 export function formatFechaDisplay(iso) {
   if (!iso) return "—";
@@ -220,5 +279,6 @@ export function debounce(fn, wait = 250) {
 }
 
 export function uniqueSorted(arr) {
-  return [...new Set(arr.map(v => String(v ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+  const limpio = arr.map(safeStr).map(v => v.trim()).filter(Boolean);
+  return [...new Set(limpio)].sort((a, b) => a.localeCompare(b, "es"));
 }

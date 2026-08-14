@@ -3,41 +3,179 @@
 // ==========================================================================
 import { db, colRef, CAMPOS } from "./firebase-config.js";
 import {
-  onSnapshot, doc, setDoc, addDoc, deleteDoc, writeBatch
+  onSnapshot, getDocs, doc, setDoc, addDoc, deleteDoc, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 import {
   showToast, validarRegistro, mapearEncabezados, normalizarFilaExcel,
-  formatFechaDisplay, uniqueSorted, debounce, getSemestre, parseFechaFlexible
+  formatFechaDisplay, uniqueSorted, debounce, getSemestre, parseFechaFlexible,
+  normalizarRegistroFirestore
 } from "./utils.js";
 
-let currentData = [];      // todos los registros (crudos de Firestore)
-let filteredData = [];     // resultado tras aplicar filtros
+let currentData = [];      // todos los registros (normalizados, en memoria)
+let filteredData = [];     // resultado tras aplicar filtros (procesado localmente)
 let selectedIds = new Set(); // _docId seleccionados
 let pendingImport = { validos: [], invalidos: [] };
+let unsubscribe = null;
 
 const modalRegistro = new bootstrap.Modal(document.getElementById('modalRegistro'));
 const modalCargaMasiva = new bootstrap.Modal(document.getElementById('modalCargaMasiva'));
 const modalEdicionMasiva = new bootstrap.Modal(document.getElementById('modalEdicionMasiva'));
 const modalValidacion = new bootstrap.Modal(document.getElementById('modalValidacion'));
 
-/* ============================== CONEXIÓN EN TIEMPO REAL ============================== */
-onSnapshot(colRef, (snapshot) => {
-  currentData = snapshot.docs.map(d => ({ _docId: d.id, ...d.data() }));
-  setConexion(true);
-  document.getElementById('totalRecords').innerText = currentData.length;
-  poblarFiltrosDinamicos();
-  aplicarFiltros();
-}, (error) => {
-  console.error(error);
-  setConexion(false);
-});
+/* ============================== CONEXIÓN EN TIEMPO REAL (FIRESTORE) ==============================
+   Flujo de datos real de la app:
+   FIRESTORE (colección "capacitaciones")
+        -> onSnapshot (trae los documentos completos, ya paginados internamente por el SDK)
+        -> normalización de cada doc (normalizarRegistroFirestore)
+        -> currentData (dataset en memoria)
+        -> aplicarFiltros() -> filteredData (procesamiento 100% local, sin volver a consultar la nube)
+        -> renderTable / renderKpis / gráficos
+   Solo "Actualizar datos" fuerza una nueva lectura explícita (getDocs) contra Firestore.
+======================================================================================================= */
+function iniciarConexion() {
+  setEstadoConexion('loading');
+  console.log('[FIREBASE] Suscribiendo a la colección "capacitaciones"...');
 
-function setConexion(ok) {
-  document.getElementById('connectionBadge').innerHTML = ok
-    ? '<span class="status-dot status-online"></span> Conectado a la nube'
-    : '<span class="status-dot status-offline"></span> Error de conexión';
+  if (typeof unsubscribe === 'function') unsubscribe();
+
+  unsubscribe = onSnapshot(colRef, (snapshot) => {
+    console.log(`[FIREBASE] Snapshot recibido. Documentos: ${snapshot.size}`);
+    procesarSnapshot(snapshot);
+  }, (error) => {
+    console.error('[FIREBASE] Error de suscripción:', error);
+    mostrarErrorCarga({
+      titulo: 'No fue posible conectar con la nube',
+      mensaje: error.message || String(error),
+      codigo: error.code || '—',
+      proceso: 'onSnapshot(capacitaciones)'
+    });
+    setEstadoConexion('error');
+  });
 }
+
+function procesarSnapshot(snapshot) {
+  // 1) La cuenta total SIEMPRE se puede obtener aunque el procesamiento falle después.
+  const totalCrudo = snapshot.size;
+  document.getElementById('totalRecords').innerText = totalCrudo;
+
+  try {
+    // 2) Verificamos explícitamente la forma de los datos antes de usarlos.
+    const docsArray = snapshot.docs;
+    if (!Array.isArray(docsArray)) {
+      throw new Error('snapshot.docs no es un arreglo. Estructura de respuesta inesperada.');
+    }
+
+    console.log('[DATA] Normalizando registros...');
+    const registros = docsArray.map(d => normalizarRegistroFirestore({ _docId: d.id, ...d.data() }, CAMPOS));
+
+    if (!Array.isArray(registros)) {
+      throw new Error('El resultado de la normalización no es un arreglo.');
+    }
+
+    currentData = registros;
+    console.log(`[DATA] Dataset cargado: ${currentData.length} registro(s)`);
+
+    ocultarErrorCarga();
+    poblarFiltrosDinamicos();
+    aplicarFiltros();
+    marcarUltimaActualizacion();
+    setEstadoConexion('online');
+  } catch (err) {
+    // 3) Si algo falla AQUÍ, el conteo ya se obtuvo pero los registros no.
+    //    Esto es exactamente una "conexión parcial": lo mostramos con claridad,
+    //    en vez de dejar la tabla congelada en "Cargando...".
+    console.error('[DATA] Error procesando los registros recibidos:', err);
+    mostrarErrorCarga({
+      titulo: 'Se pudo consultar el total, pero no fue posible obtener los registros',
+      mensaje: err.message || String(err),
+      codigo: '—',
+      proceso: 'procesarSnapshot() / normalización de documentos'
+    });
+    setEstadoConexion('partial');
+  }
+}
+
+/* ============================== ACTUALIZAR DATOS (consulta manual explícita) ============================== */
+window.actualizarDatos = async function () {
+  const btn = document.getElementById('btnActualizarDatos');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-1"></i> Actualizando...'; }
+  setEstadoConexion('loading');
+  console.log('[FIREBASE] Actualización manual solicitada. Consultando de nuevo...');
+
+  try {
+    const snapshot = await getDocs(colRef);
+    console.log(`[FIREBASE] Respuesta recibida. Documentos: ${snapshot.size}`);
+    procesarSnapshot(snapshot);
+    showToast('Datos actualizados desde la nube.', 'success');
+  } catch (err) {
+    console.error('[FIREBASE] Error al actualizar manualmente:', err);
+    mostrarErrorCarga({
+      titulo: 'No fue posible actualizar los datos',
+      mensaje: err.message || String(err),
+      codigo: err.code || '—',
+      proceso: 'getDocs(capacitaciones)'
+    });
+    setEstadoConexion('error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos'; }
+  }
+};
+
+window.reintentarCarga = function () {
+  console.log('[FIREBASE] Reintentando conexión...');
+  iniciarConexion();
+};
+
+function marcarUltimaActualizacion() {
+  const el = document.getElementById('lastUpdated');
+  if (!el) return;
+  const ahora = new Date();
+  el.innerText = `Actualizado: ${ahora.toLocaleDateString('es-CO')} ${ahora.toLocaleTimeString('es-CO')}`;
+}
+
+/* ============================== ESTADOS DE CONEXIÓN / ERRORES ============================== */
+function setEstadoConexion(estado) {
+  const badge = document.getElementById('connectionBadge');
+  const mapa = {
+    loading: '<span class="status-dot status-loading"></span> Conectando...',
+    online: '<span class="status-dot status-online"></span> Conectado a la nube',
+    partial: '<span class="status-dot status-partial"></span> Conexión parcial',
+    error: '<span class="status-dot status-offline"></span> Error de conexión'
+  };
+  badge.innerHTML = mapa[estado] || mapa.error;
+}
+
+function mostrarErrorCarga({ titulo, mensaje, codigo, proceso }) {
+  const cont = document.getElementById('loadErrorPanel');
+  if (!cont) return;
+  cont.classList.remove('d-none');
+  cont.innerHTML = `
+    <div class="d-flex align-items-start gap-3">
+      <i class="fa-solid fa-triangle-exclamation" style="color:var(--dg-red); font-size:1.4rem; margin-top:2px;"></i>
+      <div class="flex-grow-1">
+        <div class="fw-bold" style="color:var(--dg-red);">${escapeHtml(titulo)}</div>
+        <div class="small mt-1" style="color:var(--ink-600);"><strong>Proceso:</strong> ${escapeHtml(proceso)}</div>
+        <div class="small" style="color:var(--ink-600);"><strong>Código:</strong> ${escapeHtml(codigo)}</div>
+        <div class="small mono mt-1" style="color:var(--ink-600); word-break:break-word;">${escapeHtml(mensaje)}</div>
+      </div>
+      <button class="btn btn-sm btn-navy" onclick="reintentarCarga()"><i class="fa-solid fa-rotate-right me-1"></i>Reintentar</button>
+    </div>`;
+  // También reflejamos el error en la propia tabla en vez de dejarla en "Cargando...".
+  const tbody = document.getElementById('tableBody');
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="18" class="text-center py-4" style="color:var(--dg-red);">
+      <i class="fa-solid fa-triangle-exclamation me-2"></i>No fue posible cargar los registros. Ver detalle arriba.
+    </td></tr>`;
+  }
+}
+
+function ocultarErrorCarga() {
+  const cont = document.getElementById('loadErrorPanel');
+  if (cont) { cont.classList.add('d-none'); cont.innerHTML = ''; }
+}
+
+iniciarConexion();
 
 /* ============================== FILTROS ============================== */
 const filtroIds = ["searchInput", "filtroGrupo", "filtroBase", "filtroSalon", "filtroInstructor", "filtroAsistio", "filtroFechaDesde", "filtroFechaHasta", "filtroSemestre"];
@@ -115,6 +253,7 @@ function renderKpis(data) {
 
 /* ============================== TABLA ============================== */
 function renderTable(data) {
+  console.log(`[TABLE] Renderizando ${data.length} registro(s)`);
   const tbody = document.getElementById('tableBody');
   if (data.length === 0) {
     tbody.innerHTML = '<tr><td colspan="18" class="text-center py-5 text-muted">No hay registros que coincidan con los filtros aplicados.</td></tr>';
