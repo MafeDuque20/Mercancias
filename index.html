@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TALMA DATA CENTER · Operaciones — Mercancías Peligrosas</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+    <!-- ================= HEADER ================= -->
+    <div class="tdc-topline"></div>
+    <div class="tdc-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-3">
+            <div class="tdc-brandmark">TDC</div>
+            <div>
+                <h1 class="tdc-title">Talma Data Center</h1>
+                <p class="tdc-subtitle">Gestión y análisis de información</p>
+            </div>
+        </div>
+        <div class="tdc-nav-wrap">
+            <div class="tdc-nav d-flex">
+                <a href="index.html" class="active"><i class="fa-solid fa-table-list me-1"></i> <span class="nav-label">Operaciones</span></a>
+                <a href="analitica.html"><i class="fa-solid fa-chart-line me-1"></i> <span class="nav-label">Analítica y Gráficos</span></a>
+            </div>
+            <button type="button" class="tdc-theme-toggle" id="themeToggleBtn" title="Cambiar tema" aria-label="Cambiar entre modo claro y oscuro">
+                <i class="fa-solid fa-moon"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="container-fluid px-4 mt-4">
+
+        <!-- ================= KPIs ================= -->
+        <div class="row g-3 mb-1">
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <div class="hz-diamond bg-navy"><i class="fa-solid fa-database" style="color:#fff"></i></div>
+                    <div>
+                        <div class="kpi-value" id="kpiTotal">0</div>
+                        <div class="kpi-label">Registros filtrados</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <div class="hz-diamond bg-si"><i class="fa-solid fa-user-check" style="color:#fff"></i></div>
+                    <div>
+                        <div class="kpi-value" id="kpiAsistencia">0%</div>
+                        <div class="kpi-label">Tasa de asistencia</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <div class="hz-diamond bg-teal"><i class="fa-solid fa-people-group" style="color:#fff"></i></div>
+                    <div>
+                        <div class="kpi-value" id="kpiGrupos">0</div>
+                        <div class="kpi-label">Grupos activos</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="kpi-card">
+                    <div class="hz-diamond bg-orange"><i class="fa-solid fa-tower-broadcast" style="color:#fff"></i></div>
+                    <div>
+                        <div class="kpi-value" id="kpiBases">0</div>
+                        <div class="kpi-label">Bases activas</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= PANEL DE ESTADO / ACCIONES ================= -->
+        <div class="card card-custom p-3 mt-3">
+            <div class="row align-items-center text-center text-md-start">
+                <div class="col-md-3 mb-2 mb-md-0">
+                    <small class="text-muted d-block">Estado de conexión</small>
+                    <span id="connectionBadge" class="fw-bold text-secondary">
+                        <span class="status-dot status-loading"></span> Conectando...
+                    </span>
+                </div>
+                <div class="col-md-3 mb-2 mb-md-0">
+                    <small class="text-muted d-block">Total de registros en la nube</small>
+                    <span id="totalRecords" class="fw-bold fs-5 text-dark mono">0</span>
+                </div>
+                <div class="col-md-6 text-md-end">
+                    <button class="btn btn-sm btn-outline-success me-1" onclick="exportarExcel()">
+                        <i class="fa-solid fa-file-excel me-1"></i> Exportar filtro
+                    </button>
+                    <button class="btn btn-sm btn-outline-navy me-1" data-bs-toggle="modal" data-bs-target="#modalCargaMasiva">
+                        <i class="fa-solid fa-file-arrow-up me-1"></i> Carga masiva
+                    </button>
+                    <button class="btn btn-sm btn-navy" onclick="abrirModalNuevo()">
+                        <i class="fa-solid fa-plus me-1"></i> Nuevo registro
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= FILTROS AVANZADOS ================= -->
+        <div class="filter-panel">
+            <div class="section-title mb-3">
+                <span class="hz-diamond bg-navy"><i class="fa-solid fa-filter" style="color:#fff"></i></span>
+                Filtros avanzados
+            </div>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="filter-label">Buscar (texto libre)</label>
+                    <input type="text" id="searchInput" class="form-control" placeholder="ID, nombre, correo, grupo...">
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="filter-label">Desde</label>
+                    <input type="date" id="filtroFechaDesde" class="form-control" onchange="aplicarFiltros()">
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="filter-label">Hasta</label>
+                    <input type="date" id="filtroFechaHasta" class="form-control" onchange="aplicarFiltros()">
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="filter-label">Semestre</label>
+                    <select id="filtroSemestre" class="form-select" onchange="aplicarFiltros()">
+                        <option value="todos">Todos</option>
+                        <option value="1">Semestre 1 (Ene–Jun)</option>
+                        <option value="2">Semestre 2 (Jul–Dic)</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="filter-label">Asistencia</label>
+                    <select id="filtroAsistio" class="form-select" onchange="aplicarFiltros()">
+                        <option value="">Todos</option>
+                        <option value="SÍ">Asistió</option>
+                        <option value="NO">No asistió</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-1 d-flex align-items-end">
+                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="limpiarFiltros()" title="Limpiar filtros">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                </div>
+
+                <div class="col-6 col-md-3">
+                    <label class="filter-label">Grupo</label>
+                    <select id="filtroGrupo" class="form-select" onchange="aplicarFiltros()"><option value="">Todos</option></select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="filter-label">Base</label>
+                    <select id="filtroBase" class="form-select" onchange="aplicarFiltros()"><option value="">Todos</option></select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="filter-label">Salón</label>
+                    <select id="filtroSalon" class="form-select" onchange="aplicarFiltros()"><option value="">Todos</option></select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="filter-label">Instructor</label>
+                    <select id="filtroInstructor" class="form-select" onchange="aplicarFiltros()"><option value="">Todos</option></select>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= TABLA ================= -->
+        <div class="card card-custom p-3">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped border align-middle mb-0">
+                    <thead class="table-dark-custom">
+                        <tr>
+                            <th style="width:36px"><input type="checkbox" class="form-check-input" id="selectAllCheckbox" onclick="toggleSelectAll(this)"></th>
+                            <th>Acciones</th>
+                            <th>ID</th>
+                            <th>Nombres y Apellidos</th>
+                            <th>Programa</th>
+                            <th>Curso</th>
+                            <th>Fecha</th>
+                            <th>Intensidad</th>
+                            <th>Base</th>
+                            <th>Hora</th>
+                            <th>Salón</th>
+                            <th>Grupo</th>
+                            <th>Cargo</th>
+                            <th>Correo</th>
+                            <th>Instructor</th>
+                            <th>Asistió</th>
+                            <th>Nota</th>
+                            <th>Observación</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <tr><td colspan="18" class="text-center py-4 text-muted tdc-loading-row"><i class="fa-solid fa-circle-notch fa-spin me-2"></i>Cargando registros desde la nube...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- BARRA DE ACCIONES MASIVAS -->
+            <div class="bulk-bar" id="bulkBar">
+                <div>
+                    <span class="chip-count me-2"><span id="bulkCount">0</span> seleccionados</span>
+                    <button class="btn btn-sm btn-link text-white text-decoration-none" onclick="limpiarSeleccion()">Limpiar selección</button>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-light me-2" onclick="abrirEdicionMasiva()">
+                        <i class="fa-solid fa-pen-to-square me-1"></i> Edición masiva
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="eliminarSeleccionados()">
+                        <i class="fa-solid fa-trash me-1"></i> Eliminar seleccionados
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: NUEVO / EDITAR ================= -->
+    <div class="modal fade" id="modalRegistro" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header" style="background:var(--navy-900); color:white;">
+                    <h5 class="modal-title" id="modalTitle">Registro de Capacitación</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="formErrors" class="mb-2" style="color:var(--dg-red); font-size:0.82rem;"></div>
+                    <form id="registroForm">
+                        <input type="hidden" id="recordDocId">
+                        <div class="row g-2">
+                            <div class="col-md-3"><label class="form-label">ID / Cédula *</label><input type="text" id="field_ID" class="form-control" required></div>
+                            <div class="col-md-5"><label class="form-label">Nombres y Apellidos *</label><input type="text" id="field_NOMBRES" class="form-control" required></div>
+                            <div class="col-md-4"><label class="form-label">Programa</label><input type="text" id="field_PROGRAMA" class="form-control"></div>
+
+                            <div class="col-md-6"><label class="form-label">Curso</label><input type="text" id="field_CURSO" class="form-control" placeholder="Básico Inicial, Recurrente..."></div>
+                            <div class="col-md-3"><label class="form-label">Fecha</label><input type="date" id="field_FECHA" class="form-control"></div>
+                            <div class="col-md-3"><label class="form-label">Intensidad</label><input type="text" id="field_INTENSIDAD" class="form-control" placeholder="8 horas"></div>
+
+                            <div class="col-md-3"><label class="form-label">Base</label><input type="text" id="field_BASE" class="form-control" placeholder="BOG, MDE, ADZ..."></div>
+                            <div class="col-md-3"><label class="form-label">Hora</label><input type="text" id="field_HORA" class="form-control"></div>
+                            <div class="col-md-3"><label class="form-label">Salón</label><input type="text" id="field_SALON" class="form-control"></div>
+                            <div class="col-md-3"><label class="form-label">Grupo</label><input type="text" id="field_GRUPO" class="form-control" placeholder="GRUPO SI-AGO 02"></div>
+
+                            <div class="col-md-4"><label class="form-label">Cargo</label><input type="text" id="field_CARGO" class="form-control"></div>
+                            <div class="col-md-4"><label class="form-label">Correo</label><input type="email" id="field_CORREO" class="form-control"></div>
+                            <div class="col-md-4"><label class="form-label">Instructor</label><input type="text" id="field_INSTRUCTOR" class="form-control"></div>
+
+                            <div class="col-md-3"><label class="form-label">Asistió</label>
+                                <select id="field_ASISTIO" class="form-select">
+                                    <option value="SÍ">SÍ</option>
+                                    <option value="NO">NO</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3"><label class="form-label">Nota</label><input type="text" id="field_NOTA" class="form-control"></div>
+                            <div class="col-md-6"><label class="form-label">Observación</label><input type="text" id="field_OBSERVACION" class="form-control"></div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-navy" onclick="guardarRegistro()">Guardar registro</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: CARGA MASIVA ================= -->
+    <div class="modal fade" id="modalCargaMasiva" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:var(--dg-green); color:white;">
+                    <h5 class="modal-title"><i class="fa-solid fa-file-excel me-2"></i>Carga masiva desde Excel</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Selecciona un archivo Excel (.xlsx, .xls) o CSV. El sistema reconoce automáticamente encabezados con o sin tildes y en distinto orden, y validará cada fila antes de subirla a la nube.</p>
+                    <input type="file" id="excelFileInput" class="form-control mb-3" accept=".xlsx, .xls, .csv">
+                    <div id="bulkStatus" class="small fw-bold" style="color: var(--navy-800);"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    <button type="button" class="btn" style="background:var(--dg-green); color:white;" onclick="procesarCargaMasiva()">
+                        <i class="fa-solid fa-magnifying-glass-chart me-1"></i> Validar archivo
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: REPORTE DE VALIDACIÓN ================= -->
+    <div class="modal fade" id="modalValidacion" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header" style="background:var(--navy-900); color:white;">
+                    <h5 class="modal-title"><i class="fa-solid fa-clipboard-check me-2"></i>Reporte de validación</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3 mb-3 text-center">
+                        <div class="col-4">
+                            <div class="kpi-card justify-content-center"><div><div class="kpi-value" id="valTotal">0</div><div class="kpi-label">Filas leídas</div></div></div>
+                        </div>
+                        <div class="col-4">
+                            <div class="kpi-card justify-content-center"><div><div class="kpi-value" id="valValidos" style="color:var(--dg-green)">0</div><div class="kpi-label">Válidas</div></div></div>
+                        </div>
+                        <div class="col-4">
+                            <div class="kpi-card justify-content-center"><div><div class="kpi-value" id="valInvalidos" style="color:var(--dg-red)">0</div><div class="kpi-label">Con errores</div></div></div>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="max-height: 40vh;">
+                        <table class="table table-sm">
+                            <thead class="table-dark-custom">
+                                <tr><th>Fila</th><th>ID</th><th>Nombres</th><th>Motivo</th></tr>
+                            </thead>
+                            <tbody id="valTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger" onclick="descargarReporteErrores()">
+                        <i class="fa-solid fa-file-arrow-down me-1"></i> Descargar errores
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" id="btnSubirValidos" class="btn btn-navy" onclick="confirmarSubidaValidos()">
+                        <i class="fa-solid fa-cloud-arrow-up me-1"></i> Subir registros válidos
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= MODAL: EDICIÓN MASIVA ================= -->
+    <div class="modal fade" id="modalEdicionMasiva" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header" style="background:var(--navy-900); color:white;">
+                    <h5 class="modal-title"><i class="fa-solid fa-pen-to-square me-2"></i>Edición masiva — <span id="bulkEditCount">0</span> registro(s)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Activa la casilla de cada campo que quieras sobrescribir en todos los registros seleccionados. Los campos no activados permanecerán sin cambios.</p>
+                    <form id="formEdicionMasiva">
+                        <div class="row g-3">
+
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="INSTRUCTOR" data-target="bulk_INSTRUCTOR" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Instructor</label><input type="text" id="bulk_INSTRUCTOR" class="form-control" disabled></div>
+                            </div>
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="FECHA" data-target="bulk_FECHA" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Fecha</label><input type="date" id="bulk_FECHA" class="form-control" disabled></div>
+                            </div>
+
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="HORA" data-target="bulk_HORA" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Hora</label><input type="text" id="bulk_HORA" class="form-control" disabled></div>
+                            </div>
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="SALON" data-target="bulk_SALON" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Salón</label><input type="text" id="bulk_SALON" class="form-control" disabled></div>
+                            </div>
+
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="GRUPO" data-target="bulk_GRUPO" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Grupo</label><input type="text" id="bulk_GRUPO" class="form-control" disabled></div>
+                            </div>
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="BASE" data-target="bulk_BASE" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Base</label><input type="text" id="bulk_BASE" class="form-control" disabled></div>
+                            </div>
+
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="CURSO" data-target="bulk_CURSO" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Curso</label><input type="text" id="bulk_CURSO" class="form-control" disabled></div>
+                            </div>
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="PROGRAMA" data-target="bulk_PROGRAMA" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Programa</label><input type="text" id="bulk_PROGRAMA" class="form-control" disabled></div>
+                            </div>
+
+                            <div class="col-md-6 d-flex gap-2 align-items-center">
+                                <input type="checkbox" class="form-check-input bulk-field-toggle" data-campo="ASISTIO" data-target="bulk_ASISTIO" onchange="toggleBulkField(this)">
+                                <div class="flex-grow-1"><label class="form-label mb-0">Asistió</label>
+                                    <select id="bulk_ASISTIO" class="form-select" disabled>
+                                        <option value="SÍ">SÍ</option>
+                                        <option value="NO">NO</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-navy" onclick="aplicarEdicionMasiva()">
+                        <i class="fa-solid fa-check me-1"></i> Aplicar a seleccionados
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/js/theme.js"></script>
+    <script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
