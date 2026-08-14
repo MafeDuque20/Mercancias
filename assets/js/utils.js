@@ -220,5 +220,5 @@ export function debounce(fn, wait = 250) {
 }
 
 export function uniqueSorted(arr) {
-  return [...new Set(arr.filter(v => v && v.trim()))].sort((a, b) => a.localeCompare(b, "es"));
+  return [...new Set(arr.map(v => String(v ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
 }
