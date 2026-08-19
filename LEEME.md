@@ -1,80 +1,81 @@
 # TALMA DATA CENTER — Mercancías Peligrosas
 
-Sistema de radicación y analítica de capacitaciones, conectado en tiempo real
-a Firestore (mismo proyecto y colección `capacitaciones` que ya tenías, por
-lo que tus datos actuales no se pierden).
+Sistema corporativo de gestión y análisis de capacitaciones, conectado en
+tiempo real a Firestore (mismo proyecto y colección `capacitaciones` que
+ya tenías, por lo que tus datos actuales no se pierden).
 
-## Contenido del paquete
+## Arquitectura actual (SPA)
+
+La aplicación se unificó en una sola página (`index.html`) con navegación
+por hash. Todo el sistema consume una **única fuente de datos filtrados**
+(`assets/js/store.js`), de modo que tabla, KPIs, gráficos, personas,
+grupos y cursos siempre muestran exactamente el mismo conjunto de datos.
 
 ```
 talma-data-center/
-├── index.html              → Página de Operaciones (tabla, filtros, CRUD, carga masiva)
-├── analitica.html           → Página de Analítica (KPIs y gráficos)
-├── LEEME.md                  → Este archivo
+├── index.html              → Aplicación completa (SPA)
+├── analitica.html          → Redirección de compatibilidad hacia index.html#analitica
+├── LEEME.md                → Este archivo
 └── assets/
     ├── css/
-    │   └── styles.css       → Sistema de diseño compartido (tokens, tabla, badges, etc.)
+    │   └── styles.css       → Sistema de diseño (tokens, tabla, badges, SPA)
     └── js/
-        ├── firebase-config.js → Configuración de Firebase (misma que ya usabas)
-        ├── utils.js            → Validaciones, mapeo de columnas de Excel, formato de fechas, toasts
-        ├── app.js              → Lógica de Operaciones (CRUD, filtros, selección, edición masiva)
-        └── analitica.js        → Lógica de Analítica (KPIs y gráficos Chart.js)
+        ├── firebase-config.js → Credenciales y campos oficiales (16 columnas)
+        ├── utils.js            → Validación, Excel-map, fechas, formato de hora, toasts
+        ├── agregados.js        → Métricas: registros vs PERSONAS ÚNICAS (ID) y agregaciones
+        ├── store.js            → Única suscripción a Firestore + pipeline único de filtros
+        ├── filtros.js          → Barra compacta de filtros, chips y resumen
+        ├── router.js           → Router por hash (incluye detalles grupo/curso)
+        ├── ui.js               → Helpers de UI (KPIs, escape, pills, estado)
+        ├── dashboard.js        → Vista INICIO (KPIs + resumen rápido)
+        ├── asistencias.js      → Vista ASISTENCIAS (tabla ordenable, paginada, CRUD completo)
+        ├── colaboradores.js    → Vista COLABORADORES (personas únicas)
+        ├── cursos.js           → Vista CURSOS (+ detalle e histórico)
+        ├── grupos.js           → Vista GRUPOS (+ detalle con participantes)
+        ├── analitica.js        → Vista ANALÍTICA (7+ gráficos sobre store.filtered)
+        ├── perfil.js           → Ficha de colaborador (overlay): resumen, info, historial, documentos
+        ├── documentos.js       → Firebase Storage + colección Firestore 'documentos'
+        └── app.js              → Boot: inicia conexión, router y render central
 ```
+
+## Novedades respecto a la versión anterior
+
+- **SPA con 6 vistas**: Inicio, Asistencias, Colaboradores, Cursos,
+  Grupos y Analítica, más vistas de detalle de grupo/curso y perfil de
+  colaborador.
+- **Fuente de datos única (store.js)**: al filtrar (p. ej. Base=ADZ) se
+  actualizan tabla, KPIs y gráficos a la vez, con una sola suscripción a
+  Firestore (menos lecturas simultáneas).
+- **Personas únicas (ID)** diferenciadas de los registros en todos los
+  KPIs y vistas.
+- **Perfil de colaborador**: se abre desde cualquier nombre clickeable y
+  muestra resumen, información personal, historial de capacitación y
+  documentos.
+- **Documentos**: carga/descarga/eliminación reales sobre Firebase
+  Storage, con metadatos en la colección `documentos`. Se solicita el
+  nombre del usuario que carga (persistido en localStorage) porque la app
+  no tiene autenticación.
+- **Tabla mejorada**: ordenamiento por columna, paginación, formato de
+  hora legible (las fracciones de Excel como 0.4167 se ven como 10:00),
+  y tarjetas responsivas en móvil.
+- Conserva intacto: crear/editar/eliminar, selección múltiple, edición
+  masiva, carga masiva con validación, exportación a Excel, actualizar
+  datos y tema claro/oscuro.
 
 ## Cómo usarlo
 
-1. Descomprime el ZIP conservando la estructura de carpetas (`index.html` y
-   `analitica.html` deben quedar en la raíz, junto a la carpeta `assets/`).
-2. Súbelo tal cual a donde alojas la herramienta hoy (mismo hosting/GitHub
-   Pages/servidor interno). No requiere backend ni build: son archivos
-   estáticos.
-3. Abre `index.html` en el navegador — se conecta automáticamente a Firestore.
-
-## Qué cambió respecto a la versión anterior
-
-- **Estructura de datos**: se conservan exactamente las mismas 16 columnas y
-  las mismas claves en Firestore (`ID`, `NOMBRES`, `PROGRAMA`, `CURSO`,
-  `FECHA`, `INTENSIDAD`, `BASE`, `HORA`, `SALON`, `GRUPO`, `CARGO`,
-  `CORREO`, `INSTRUCTOR`, `ASISTIO`, `NOTA`, `OBSERVACION`).
-- **Filtros avanzados combinables** en Operaciones y Analítica: texto libre,
-  rango de fechas, semestre, grupo, base, salón, instructor y asistencia —
-  todos se aplican a la vez.
-- **Validación de datos** en el formulario individual y en la carga masiva:
-  ID numérico (5–12 dígitos), nombres obligatorios, correo con formato
-  válido, fecha dentro de un rango razonable (2015–2035), asistencia SÍ/NO.
-- **Carga masiva robusta**: reconoce encabezados de Excel aunque vengan
-  desordenados, sin tildes o con nombres alternativos (p. ej. "Cédula",
-  "Nombre completo", "Estación"). Antes de subir nada, muestra un reporte
-  de validación con el conteo de filas válidas/inválidas y el motivo exacto
-  de cada error, con opción de descargar ese reporte en Excel y de subir
-  solo las filas válidas.
-- **Selección múltiple y edición masiva**: casillas de verificación por
-  fila (o "seleccionar todo lo filtrado"), con una barra de acciones para
-  eliminar en lote o abrir el modal de **Edición Masiva**, donde eliges qué
-  campos sobrescribir (Instructor, Fecha, Hora, Salón, Grupo, Base, Curso,
-  Programa, Asistió) y a cuántos registros aplicarlo — ideal para asignar
-  instructor/salón a un grupo completo de una sola vez.
-- **KPIs en tiempo real** arriba de la tabla y en analítica: registros
-  filtrados, % de asistencia, grupos activos, bases activas, horas
-  ejecutadas.
-- **Analítica ampliada** (Chart.js): asistencia global, asistencia por
-  Base/Grupo (con botón para alternar entre ambas agrupaciones),
-  distribución por Salón, distribución por Instructor, y horas totales de
-  capacitación ejecutadas por periodo semestral.
-- **Diseño renovado**: paleta corporativa Talma (azul marino) combinada con
-  un lenguaje visual de "rótulo de mercancías peligrosas" (insignias en
-  forma de rombo) usado consistentemente para los estados de asistencia y
-  los íconos de KPI — coherente con el propósito del sistema.
-- **Notificaciones tipo toast** en vez de `alert()` para todas las acciones
-  (guardar, eliminar, exportar, errores de conexión, etc.).
+1. Descomprime el ZIP conservando la estructura de carpetas (`index.html`
+   en la raíz junto a `assets/`).
+2. Súbelo tal cual a tu hosting/servidor interno. No requiere backend ni
+   build: son archivos estáticos.
+3. Abre `index.html` — se conecta automáticamente a Firestore.
+4. Para documentos, habilita Firebase Storage y permite escribir/crear en
+   la colección `documentos` (usa las mismas reglas que la colección
+   `capacitaciones` donde aplique).
 
 ## Notas técnicas
 
-- Los archivos JavaScript son módulos ES (`type="module"`), por lo que
-  algunos navegadores exigen servirlos por `http://` o `https://` (no
-  `file://` directo) — si lo pruebas en tu equipo, usa un servidor local
-  simple (por ejemplo `npx serve` o la extensión "Live Server") o súbelo
-  directo a tu hosting.
-- Las escrituras masivas (edición y eliminación en lote, carga de Excel) se
-  dividen automáticamente en bloques de 450 operaciones para respetar el
-  límite de 500 operaciones por lote de Firestore.
+- Las escrituras masivas se dividen en bloques de 450 operaciones
+  (límite de Firestore).
+- El antiguo enlace `analitica.html` redirige automáticamente a
+  `index.html#analitica`.
