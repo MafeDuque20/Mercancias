@@ -270,6 +270,37 @@ export function parseHorasNumero(intensidad) {
   return m ? parseFloat(m[1]) : 0;
 }
 
+export function parseNotaNumero(nota) {
+  if (!nota) return null;
+  const m = String(nota).match(/(\d+(\.\d+)?)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/* ---------------------------- Formato de hora legible ---------------------------- */
+// Muchos registros llegan desde Excel con la hora como fracción decimal
+// de día (p. ej. 0.4166666667 = 10:00). La normalización de Firestore la
+// convierte a string "0.416666...", y sin formateo se veía así en la tabla.
+// Detecta ese caso y lo traduce a "HH:MM". Si el valor ya es legible
+// ("10:00", "9 am", etc.) lo conserva tal cual.
+export function formatHoraDisplay(hora) {
+  const raw = safeStr(hora).trim();
+  if (!raw) return "—";
+
+  const n = Number(raw);
+  if (raw !== "" && !isNaN(n) && n > 0 && n < 1) {
+    const totalMin = Math.round(n * 24 * 60);
+    const h = Math.floor(totalMin / 60) % 24;
+    const min = String(totalMin % 60).padStart(2, "0");
+    return `${String(h).padStart(2, "0")}:${min}`;
+  }
+
+  // "10:30:00" o "10:30" → siempre "HH:MM"
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (match) return `${String(match[1]).padStart(2, "0")}:${match[2]}`;
+
+  return raw;
+}
+
 export function debounce(fn, wait = 250) {
   let t;
   return (...args) => {
