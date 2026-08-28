@@ -6,6 +6,7 @@ import { store } from "./store.js";
 import { agregarPorPersona } from "./agregados.js";
 import { escapeHtml, asistenciaPill, formatBytes, promedioFmt } from "./ui.js";
 import { formatFechaDisplay, showToast } from "./utils.js";
+import { estadosPorPersona, estadoDeRegistro, coloresEstadoCapacitacion, addMeses, diffDias, vigenciaMesesCurso } from "./capacitacion.js";
 import {
   suscribirDocumentos, subirDocumento, eliminarDocumento, obtenerUrlDescarga,
 } from "./documentos.js";
@@ -76,6 +77,11 @@ export function renderPerfil(s) {
       </div>
 
       <div class="profile-section">
+        <div class="section-title mb-2"><span class="hz-diamond bg-si"><i class="fa-solid fa-shield-halved" style="color:#fff"></i></span>Estado de capacitación</div>
+        ${renderEstadoCapacitacion(persona.registros)}
+      </div>
+
+      <div class="profile-section">
         <div class="section-title mb-2"><span class="hz-diamond bg-teal"><i class="fa-solid fa-id-card" style="color:#fff"></i></span>Información personal</div>
         <div class="info-grid">
           ${infoItem("ID", persona.ID)}
@@ -92,19 +98,22 @@ export function renderPerfil(s) {
         <div class="table-responsive" style="max-height:none;">
           <table class="mini-table">
             <thead><tr>
-              <th>Curso</th><th>Fecha</th><th>Grupo</th><th>Instructor</th><th>Asistencia</th><th>Nota</th><th>Observación</th>
+              <th>Curso</th><th>Fecha</th><th>Vencimiento</th><th>Estado</th><th>Grupo</th><th>Instructor</th><th>Asistencia</th>
             </tr></thead>
             <tbody>
-              ${persona.registros.slice().sort((a, b) => (b.FECHA || "").localeCompare(a.FECHA || "")).map(r => `
+              ${persona.registros.slice().sort((a, b) => (b.FECHA || "").localeCompare(a.FECHA || "")).map(r => {
+                const e = estadoDeRegistroLocal(r);
+                return `
                 <tr>
                   <td>${escapeHtml(r.CURSO || "—")}</td>
                   <td class="mono">${formatFechaDisplay(r.FECHA)}</td>
+                  <td class="mono">${e.vencimiento ? formatFechaDisplay(e.vencimiento) : "—"}</td>
+                  <td>${chipPerfilEstado(e)}</td>
                   <td>${escapeHtml(r.GRUPO || "—")}</td>
                   <td>${escapeHtml(r.INSTRUCTOR || "—")}</td>
                   <td>${asistenciaPill(r)}</td>
-                  <td class="num">${escapeHtml(r.NOTA || "—")}</td>
-                  <td>${escapeHtml(r.OBSERVACION || "—")}</td>
-                </tr>`).join("")}
+                </tr>`;
+              }).join("")}
             </tbody>
           </table>
         </div>
@@ -123,6 +132,44 @@ export function renderPerfil(s) {
 
 function infoItem(label, value) {
   return `<div><div class="ig-label">${label}</div><div class="ig-value">${escapeHtml(value || "—")}</div></div>`;
+}
+
+function chipPerfilEstado(estado) {
+  const { color, soft } = coloresEstadoCapacitacion(estado.estado);
+  return `<span class="est-chip ${soft}" style="--chip-color:${color}"><i class="fa-solid ${estado.icono}"></i> ${estado.etiqueta}</span>`;
+}
+
+function estadoDeRegistroLocal(rec) {
+  return estadoDeRegistro(rec, store.estadoHoy);
+}
+
+// Sección "Estado de capacitación" del perfil: por curso, con vencimiento,
+// estado actual y próxima recurrencia sugerida.
+function renderEstadoCapacitacion(registros) {
+  const e = estadosPorPersona(registros, store.estadoHoy);
+  if (!e.cursos.length) {
+    return `<div class="text-muted small">Sin registros de capacitación.</div>`;
+  }
+  const items = e.cursos.map(c => {
+    const hoy = store.estadoHoy;
+    const proxima = c.fecha ? addMeses(c.fecha, vigenciaMesesCurso(c.curso)) : "";
+    const dias = c.fecha && proxima ? diffDias(proxima, hoy) : null;
+    const recurrencia = dias !== null && dias <= 0;
+    return `
+      <div class="estado-curso-item">
+        <div class="estado-curso-head">
+          <strong>${escapeHtml(c.curso)}</strong>
+          ${chipPerfilEstado(c.estado)}
+        </div>
+        <div class="estado-curso-grid">
+          <div><span class="ec-label">Última capacitación</span><span class="ec-value">${c.fecha ? formatFechaDisplay(c.fecha) : "—"}</span></div>
+          <div><span class="ec-label">Vence</span><span class="ec-value">${c.vencimiento ? formatFechaDisplay(c.vencimiento) : "—"}</span></div>
+          <div><span class="ec-label">Próxima recurrencia</span><span class="ec-value">${proxima ? formatFechaDisplay(proxima) : "—"}${recurrencia ? " <span class='ec-urgente'>(ya vencida)</span>" : ""}</span></div>
+          <div><span class="ec-label">Registros</span><span class="ec-value">${c.registros}</span></div>
+        </div>
+      </div>`;
+  }).join("");
+  return `<div class="estado-cursos">${items}</div>`;
 }
 
 function docIcon(tipo) {
