@@ -230,12 +230,32 @@ export function normalizarFilaExcel(rowRaw, mapaEncabezados) {
       const v = String(valor).trim().toUpperCase();
       rec.ASISTIO = v === "NO" ? "NO" : (v === "" ? "SÍ" : "SÍ");
     } else if (campo === "ID") {
-      rec.ID = String(valor).trim().replace(/\.0$/, "");
+      // La cédula es un IDENTIFICADOR. Se normalizan puntos, espacios,
+      // comillas y decimales de Excel (1.036.961.650 → 1036961650).
+      rec.ID = normalizarCedulaLigera(valor);
     } else {
       rec[campo] = String(valor).trim();
     }
   }
   return rec;
+}
+
+// Versión ligera de normalizarCedula (sin dependencias circulares) para el
+// mapeo de filas de Excel. Mantiene solo dígitos (y signo si aplica).
+function normalizarCedulaLigera(value) {
+  let s = String(value ?? "").trim();
+  if (!s) return "";
+  if (/^[\d.\-]+[eE][+-]?\d+$/.test(s)) {
+    const n = parseFloat(s);
+    if (Number.isFinite(n) && Number.isInteger(n)) return String(n);
+  }
+  s = s.replace(/\.0+$/, "");
+  if (/^-?\d+(\.\d+)?$/.test(s)) {
+    const n = parseFloat(s);
+    if (Number.isFinite(n) && Number.isInteger(n)) return String(n);
+  }
+  s = s.replace(/[.\s'\u2019"\u201C\u201D`´-]/g, "");
+  return s;
 }
 
 /* ---------------------------- Normalización de un doc de Firestore ---------------------------- */

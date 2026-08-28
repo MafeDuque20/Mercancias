@@ -11,9 +11,12 @@ import {
 } from "./utils.js";
 import { store } from "./store.js";
 import { escapeHtml } from "./ui.js";
+import {
+  normalizarCedula, clasificarRegistro, conTrazas, clavePersonaCurso, claveExactaPersonaCursoFecha,
+} from "./capacitacion.js";
 
 let selectedIds = new Set();
-let pendingImport = { validos: [], invalidos: [] };
+let pendingImport = { filas: [], resumen: null };
 
 let sortKey = "FECHA";
 let sortDir = -1;
@@ -275,6 +278,9 @@ window.guardarRegistro = async function () {
     dataObj[campo] = el ? el.value.trim() : "";
   });
 
+  // Normaliza la cédula antes de validar (identificador, no número).
+  dataObj.ID = normalizarCedula(dataObj.ID);
+
   const { valido, errores } = validarRegistro(dataObj);
   limpiarValidacionForm();
   if (!valido) {
@@ -288,11 +294,33 @@ window.guardarRegistro = async function () {
 
   try {
     if (docId) {
-      await setDoc(doc(db, "capacitaciones", docId), dataObj);
+      await setDoc(doc(db, "capacitaciones", docId), conTrazas(dataObj, "Edición manual", "actualizar"));
       showToast("Registro actualizado correctamente.", "success");
     } else {
-      await addDoc(colRef, dataObj);
-      showToast("Registro creado correctamente.", "success");
+      // UPSERT individual: antes de crear, verifica si ya existe la misma
+      // persona (CÉDULA) con el mismo curso dentro de la vigencia.
+      //   - Existe vigente  → ACTUALIZA ese registro (nunca duplica).
+      //   - Vencido o nunca → CREA un registro nuevo (conserva historial).
+      const hoy = store.estadoHoy;
+      const similar = store.data.find(e =>
+        normalizarCedula(e.ID) === dataObj.ID &&
+        (e.CURSO || "").trim().toUpperCase() === (dataObj.CURSO || "").trim().toUpperCase()
+      );
+      if (similar) {
+        const clase = clasificarRegistro(dataObj, [similar], hoy);
+        if (clase.accion === "nuevo") {
+          await addDoc(colRef, conTrazas(dataObj, "Registro individual", "crear"));
+          showToast("Registro creado (nueva recurrencia tras vigencia vencida).", "success");
+        } else if (clase.accion === "sin_cambios") {
+          showToast("Ya existe un registro idéntico de esta persona y curso.", "warning");
+        } else {
+          await setDoc(doc(db, "capacitaciones", similar._docId), conTrazas(dataObj, "Registro individual", "actualizar", similar));
+          showToast("Registro existente actualizado (se evitó un duplicado).", "success");
+        }
+      } else {
+        await addDoc(colRef, conTrazas(dataObj, "Registro individual", "crear"));
+        showToast("Registro creado correctamente.", "success");
+      }
     }
     modalRegistro.hide();
   } catch (err) {
@@ -427,20 +455,44 @@ window.procesarCargaMasiva = function () {
         showToast("No se pudo identificar las columnas ID y/o Nombres. Revisa los encabezados del archivo.", "danger");
         return;
       }
-      const validos = [];
-      const invalidos = [];
+      // 1) VALIDAR y limpiar cada fila (cédula, nombre, curso, fechas).
+      const filas = [];
       jsonData.forEach((rowRaw, idx) => {
         const rec = normalizarFilaExcel(rowRaw, mapa);
         if (!rec.PROGRAMA) rec.PROGRAMA = "Mercancías Peligrosas";
+        rec.ID = normalizarCedula(rec.ID);
+        rec.CURSO = String(rec.CURSO || "").trim().replace(/\s+/g, " ");
         const { valido, errores } = validarRegistro(rec);
         const erroresFinal = [...errores];
         if (rec._fechaValida === false) erroresFinal.push("Fecha con formato irreconocible");
         delete rec._fechaValida;
-        if (valido && erroresFinal.length === 0) validos.push(rec);
-        else invalidos.push({ fila: idx + 2, ...rec, _errores: erroresFinal.join("; ") });
+        if (!rec.CURSO) erroresFinal.push("Curso vacío");
+        filas.push({ fila: idx + 2, rec, erroresFinal });
       });
-      pendingImport = { validos, invalidos };
-      mostrarReporteValidacion(jsonData.length, validos.length, invalidos.length, invalidos);
+
+      // 2) Detectar DUPLICADOS INTERNOS del archivo (misma cédula+curso y
+      //    misma fecha dentro del mismo Excel). Solo la primera ocurrencia
+      //    se toma en cuenta; las demás se marcan como "duplicado interno".
+      const vistos = new Set();
+      filas.forEach(f => {
+        if (f.erroresFinal.length > 0) { f.duplicadoInterno = false; return; }
+        const clave = claveExactaPersonaCursoFecha(f.rec.ID, f.rec.CURSO, f.rec.FECHA);
+        if (vistos.has(clave)) { f.duplicadoInterno = true; f.erroresFinal.push("Duplicado interno del archivo (misma cédula, curso y fecha)"); }
+        else vistos.add(clave);
+      });
+
+      // 3) Clasificar cada fila frente a lo existente en Firestore:
+      //    NUEVO | ACTUALIZAR | SIN CAMBIOS | CON ERROR.
+      const filasClasificadas = filas.map(f => {
+        if (f.erroresFinal.length > 0) {
+          return { ...f, accion: "error", objetivo: null, clase: null };
+        }
+        const { accion, objetivo, motivo } = clasificarRegistro(f.rec, store.data, store.estadoHoy);
+        return { ...f, accion, objetivo, motivo };
+      });
+
+      pendingImport = { filas: filasClasificadas, resumen: null };
+      mostrarPrevisualizacionCarga(filasClasificadas);
       statusDiv.innerText = "";
       modalCargaMasiva.hide();
     } catch (err) {
@@ -452,51 +504,157 @@ window.procesarCargaMasiva = function () {
   reader.readAsArrayBuffer(file);
 };
 
-function mostrarReporteValidacion(total, validos, invalidosCount, invalidos) {
-  document.getElementById("valTotal").innerText = total;
-  document.getElementById("valValidos").innerText = validos;
-  document.getElementById("valInvalidos").innerText = invalidosCount;
-  const tbody = document.getElementById("valTableBody");
-  if (invalidos.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Todas las filas pasaron la validación. ✅</td></tr>';
-  } else {
-    tbody.innerHTML = invalidos.map(r => `
-      <tr class="error-row">
-        <td>${r.fila}</td>
-        <td>${escapeHtml(r.ID) || "—"}</td>
-        <td>${escapeHtml(r.NOMBRES) || "—"}</td>
-        <td class="error-reason">${escapeHtml(r._errores)}</td>
-      </tr>`).join("");
-  }
-  document.getElementById("btnSubirValidos").disabled = validos === 0;
+function accionTitulo(accion) {
+  return { nuevo: "Nuevo", actualizar: "Actualizará", sin_cambios: "Sin cambios", error: "Con error", duplicado: "Duplicado" }[accion] || accion;
+}
+
+function mostrarPrevisualizacionCarga(filas) {
+  let nuevos = 0, actualizar = 0, sinCambios = 0, conError = 0, duplicadosInternos = 0;
+  filas.forEach(f => {
+    if (f.erroresFinal.length > 0) {
+      if (f.duplicadoInterno) duplicadosInternos++;
+      else conError++;
+    } else if (f.accion === "nuevo") nuevos++;
+    else if (f.accion === "actualizar") actualizar++;
+    else sinCambios++;
+  });
+
+  pendingImport.resumen = { total: filas.length, nuevos, actualizar, sinCambios, conError, duplicadosInternos };
+
+  document.getElementById("valTotal").innerText = filas.length;
+  document.getElementById("valNuevos").innerText = nuevos;
+  document.getElementById("valActualizar").innerText = actualizar;
+  document.getElementById("valSinCambios").innerText = sinCambios;
+  document.getElementById("valErrores").innerText = conError + duplicadosInternos;
+  document.getElementById("valDuplicados").innerText = duplicadosInternos;
+  document.getElementById("valComentario").innerText =
+    "Revisa la clasificación. Nada se modifica hasta que confirmes la carga.";
+
+  // Pestañas activas según haya filas de cada tipo.
+  ["tabNuevos", "tabActualizar", "tabSinCambios", "tabErrores"].forEach(id => {
+    const btnTab = document.getElementById(id);
+    if (!btnTab) return;
+    const tipo = id.replace("tab", "").toLowerCase();
+    const count = tipo === "errores" ? conError + duplicadosInternos : { nuevos, actualizar, sincambios: sinCambios }[tipo];
+    btnTab.innerText = `${accionTitulo(tipo)} (${count})`;
+  });
+
+  renderTablaPrevisualizacion("prevTableNuevos", filas.filter(f => f.accion === "nuevo"));
+  renderTablaPrevisualizacion("prevTableActualizar", filas.filter(f => f.accion === "actualizar"));
+  renderTablaPrevisualizacion("prevTableSinCambios", filas.filter(f => f.accion === "sin_cambios"));
+  renderTablaPrevisualizacion("prevTableErrores", filas.filter(f => f.erroresFinal.length > 0));
+
+  document.getElementById("btnConfirmarSubida").disabled = (nuevos + actualizar) === 0;
   modalValidacion.show();
 }
 
+function renderTablaPrevisualizacion(tbodyId, filas) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  if (filas.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">Sin filas en esta categoría.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filas.map(f => {
+    const r = f.rec;
+    const errores = f.erroresFinal.length ? `<div class="error-reason">${escapeHtml(f.erroresFinal.join("; "))}</div>` : "";
+    const motivo = f.motivo ? `<div class="prev-motive">${escapeHtml(f.motivo)}</div>` : "";
+    return `
+      <tr class="${f.erroresFinal.length ? "error-row" : ""}">
+        <td class="mono">${f.fila}</td>
+        <td class="mono">${escapeHtml(r.ID || "—")}</td>
+        <td>${escapeHtml(r.NOMBRES || "—")}</td>
+        <td>${escapeHtml(r.CURSO || "—")}</td>
+        <td class="mono">${formatFechaDisplay(r.FECHA)}</td>
+        <td>${escapeHtml(r.GRUPO || "—")}</td>
+        <td>${errores || motivo || ""}</td>
+      </tr>`;
+  }).join("");
+}
+
 window.descargarReporteErrores = function () {
-  if (pendingImport.invalidos.length === 0) return;
-  const ws = XLSX.utils.json_to_sheet(pendingImport.invalidos.map(r => ({
-    FILA: r.fila, ID: r.ID, NOMBRES: r.NOMBRES, MOTIVO_ERROR: r._errores
+  const conError = pendingImport.filas.filter(f => f.erroresFinal.length > 0);
+  if (conError.length === 0) return;
+  const ws = XLSX.utils.json_to_sheet(conError.map(f => ({
+    FILA: f.fila, ID: f.rec.ID, NOMBRES: f.rec.NOMBRES, CURSO: f.rec.CURSO, MOTIVO_ERROR: f.erroresFinal.join("; ")
   })));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Errores");
   XLSX.writeFile(wb, "TDC_Reporte_Errores_CargaMasiva.xlsx");
 };
 
+// UPSERT real: CREAR los nuevos y ACTUALIZAR los existentes, respetando el
+// límite de 450 operaciones por batch de Firestore. Nunca se duplica.
 window.confirmarSubidaValidos = async function () {
-  const validos = pendingImport.validos;
-  if (validos.length === 0) return;
+  const clientes = pendingImport.filas.filter(f =>
+    (f.accion === "nuevo" || f.accion === "actualizar") && f.erroresFinal.length === 0
+  );
+  if (clientes.length === 0) return;
+
+  // Los "nuevos" no deben pisar un registro por error de orden: si dos filas
+  // del mismo Excel se solapan (misma persona+curso vigente), la última
+  // ocurrencia se convierte en "actualizar" sobre lo que se va a crear.
+  const agrupados = new Map();
+  clientes.forEach(f => {
+    const clave = clavePersonaCurso(f.rec.ID, f.rec.CURSO);
+    if (!agrupados.has(clave)) agrupados.set(clave, []);
+    agrupados.get(clave).push(f);
+  });
+  const operaciones = [];
+  agrupados.forEach(grupo => {
+    grupo.forEach((f, i) => {
+      if (i === 0) {
+        operaciones.push({ tipo: f.accion === "nuevo" ? "crear" : "actualizar", f });
+      } else {
+        // Misma persona+curso en el archivo → solo la última fila aplica.
+        operaciones.push({ tipo: f.accion === "nuevo" ? "crear" : "actualizar", f, noop: true });
+      }
+    });
+  });
+  const reales = operaciones.filter(o => !o.noop);
+
   try {
-    for (let i = 0; i < validos.length; i += 450) {
+    let creados = 0, actualizados = 0;
+    for (let i = 0; i < reales.length; i += 450) {
       const batch = writeBatch(db);
-      validos.slice(i, i + 450).forEach(rec => batch.set(doc(colRef), rec));
+      reales.slice(i, i + 450).forEach(op => {
+        const { f } = op;
+        const recConTrazas = conTrazas(f.rec, "Carga Excel", op.tipo === "crear" ? "crear" : "actualizar", op.tipo === "actualizar" ? f.objetivo : null);
+        if (op.tipo === "crear") {
+          batch.set(doc(colRef), recConTrazas);
+          creados++;
+        } else {
+          batch.set(doc(db, "capacitaciones", f.objetivo._docId), recConTrazas, { merge: false });
+          actualizados++;
+        }
+      });
       await batch.commit();
     }
-    showToast(`${validos.length} registro(s) cargados exitosamente a la nube.`, "success");
+    showToast(`Carga completada: ${creados} creado(s), ${actualizados} actualizado(s).`, "success");
     modalValidacion.hide();
-    pendingImport = { validos: [], invalidos: [] };
+    mostrarResultadoCarga({ ...pendingImport.resumen, creados, actualizados });
+    pendingImport = { filas: [], resumen: null };
     document.getElementById("excelFileInput").value = "";
   } catch (err) {
     console.error(err);
-    showToast("Error al subir los registros validados.", "danger");
+    showToast("Error al subir los registros. No se guardaron cambios parciales pendientes.", "danger");
   }
 };
+
+function mostrarResultadoCarga(res) {
+  const cont = document.getElementById("cargaResultado");
+  if (!cont) return;
+  const fecha = new Date().toLocaleString("es-CO");
+  cont.innerHTML = `
+    <div class="carga-resultado">
+      <div class="cr-titulo"><i class="fa-solid fa-circle-check" style="color:var(--dg-green)"></i> Carga completada — ${fecha}</div>
+      <div class="cr-grid">
+        <div><span class="cr-num">${res.creados}</span><span class="cr-label">Creados</span></div>
+        <div><span class="cr-num">${res.actualizados}</span><span class="cr-label">Actualizados</span></div>
+        <div><span class="cr-num">${res.sinCambios}</span><span class="cr-label">Sin cambios</span></div>
+        <div><span class="cr-num" style="color:var(--dg-red)">${res.conError + res.duplicadosInternos}</span><span class="cr-label">Con error</span></div>
+      </div>
+    </div>`;
+  cont.scrollIntoView({ behavior: "smooth", block: "center" });
+  setTimeout(() => { cont.innerHTML = ""; }, 12000);
+}

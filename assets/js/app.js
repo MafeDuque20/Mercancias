@@ -54,15 +54,27 @@ function renderChrome() {
 
 /* ------------------------------ Botones globales ------------------------------ */
 window.actualizarDatos = async function () {
-  const btn = document.getElementById("btnActualizarDatos");
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-1"></i> Actualizando...'; }
+  const botones = ["btnActualizarDatos", "btnActualizarDatosDash"];
+  botones.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin me-1"></i> Actualizando...'; }
+  });
   const r = await store.actualizar();
-  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos'; }
+  botones.forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrows-rotate me-1"></i> Actualizar datos'; }
+  });
   if (r.ok) showToast("Datos actualizados desde la nube.", "success");
 };
 
 window.reintentarCarga = function () {
   store.connect();
+};
+
+// Desde el dashboard: ver solo los que no asistieron en el módulo Asistencias.
+window.irANoAsistieron = function () {
+  store.setFiltro("asistio", "NO");
+  navigate("asistencias");
 };
 
 /* ------------------------------ Delegación de clicks (perfil / grupo / curso) ------------------------------ */

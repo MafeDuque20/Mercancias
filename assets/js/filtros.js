@@ -18,6 +18,7 @@ const CLAVES_NORMALIZADA = {
   semestre: "semestre", asistio: "asistio",
   filtroBase: "base", filtroGrupo: "grupo", filtroCurso: "curso",
   filtroInstructor: "instructor", filtroSalon: "salon",
+  filtroEstado: "estado",
 };
 
 let invFiltros = null;
@@ -28,7 +29,7 @@ export function initFiltros() {
     <div class="filter-bar">
       <div class="fb-item fb-search">
         <label class="filter-label">Buscar</label>
-        <input type="text" id="searchInput" class="form-control" placeholder="Colaborador, ID, correo...">
+        <input type="text" id="searchInput" class="form-control" placeholder="Cédula, nombre, correo, curso, grupo, base...">
       </div>
       <div class="fb-item">
         <label class="filter-label">Base</label>
@@ -49,8 +50,24 @@ export function initFiltros() {
         </select>
       </div>
       <div class="fb-item">
+        <label class="filter-label">Estado</label>
+        <select id="filtroEstado" class="form-select">
+          <option value="">Todos</option>
+          <option value="VIGENTE">🟢 Vigente</option>
+          <option value="PRÓXIMO A VENCER">🟡 Próximo a vencer</option>
+          <option value="VENCIDO">🔴 Vencido</option>
+          <option value="SIN FECHA">⚪ Sin fecha</option>
+        </select>
+      </div>
+      <div class="fb-item">
         <button class="btn btn-sm btn-outline-navy" id="toggleMasFiltros" type="button">
           <i class="fa-solid fa-sliders me-1"></i> Más filtros
+        </button>
+      </div>
+      <div class="fb-item fb-search">
+        <label class="filter-label">&nbsp;</label>
+        <button class="btn btn-sm btn-outline-secondary w-100" id="btnLimpiarFiltros" type="button">
+          <i class="fa-solid fa-eraser me-1"></i> Limpiar filtros
         </button>
       </div>
     </div>
@@ -77,10 +94,13 @@ export function initFiltros() {
         <label class="filter-label">Instructor</label>
         <select id="filtroInstructor" class="form-select"><option value="">Todos</option></select>
       </div>
-      <div class="fb-item align-self-end">
-        <button class="btn btn-sm btn-outline-secondary" id="btnLimpiarFiltros" type="button">
-          <i class="fa-solid fa-eraser me-1"></i> Limpiar filtros
-        </button>
+      <div class="fb-item">
+        <label class="filter-label">Integridad</label>
+        <select id="filtroIntegridad" class="form-select">
+          <option value="">Todos</option>
+          <option value="duplicados">Solo duplicados</option>
+          <option value="revision">Solo pendientes de revisión</option>
+        </select>
       </div>
     </div>
     <div id="filterChips" class="filter-chips"></div>
@@ -103,6 +123,16 @@ export function initFiltros() {
     if (!el || id === "searchInput") return;
     el.addEventListener("change", () => store.setFiltro(CLAVES_NORMALIZADA[id], el.value));
   });
+
+  // Select combinado: "Solo duplicados" / "Solo pendientes de revisión".
+  const selIntegridad = document.getElementById("filtroIntegridad");
+  if (selIntegridad) {
+    selIntegridad.addEventListener("change", () => {
+      store.setFiltro("soloDuplicados", selIntegridad.value === "duplicados");
+      store.setFiltro("soloRevision", selIntegridad.value === "revision");
+      store.applyFilters();
+    });
+  }
 
   invFiltros = store.subscribe(renderUI);
   renderUI(store);
@@ -136,19 +166,26 @@ function renderChips(activos) {
   const cont = document.getElementById("filterChips");
   if (!cont) return;
   if (activos.length === 0) { cont.innerHTML = ""; return; }
-  cont.innerHTML = activos.map(f =>
-    `<button class="filter-chip" data-clave="${f.clave}" title="Quitar filtro: ${escapePlain(f.etiqueta)}">
-       ${escapePlain(f.etiqueta)}: ${escapePlain(f.valor)}
+  cont.innerHTML = activos.map(f => {
+    const texto = f.valor ? `${f.etiqueta}: ${f.valor}` : f.etiqueta;
+    return `<button class="filter-chip" data-clave="${f.clave}" title="Quitar filtro: ${escapePlain(texto)}">
+       ${escapePlain(texto)}
        <span class="fc-remove"><i class="fa-solid fa-xmark"></i></span>
-     </button>`).join("");
+     </button>`;
+  }).join("");
   cont.querySelectorAll(".filter-chip").forEach(chip => {
     chip.addEventListener("click", () => {
       const clave = chip.dataset.clave;
-      store.setFiltro(clave, clave === "semestre" ? "todos" : "");
+      if (clave === "soloDuplicados" || clave === "soloRevision") {
+        store.setFiltro(clave, false);
+      } else {
+        store.setFiltro(clave, clave === "semestre" ? "todos" : "");
+      }
       // Forzamos la limpieza visual del control aunque el foco esté en otro sitio.
       const id = Object.keys(CLAVES_NORMALIZADA).find(k => CLAVES_NORMALIZADA[k] === clave);
       const el = id ? document.getElementById(id) : null;
       if (el) el.value = clave === "semestre" ? "todos" : "";
+      sincronizarControles(store);
     });
   });
 }
@@ -157,23 +194,30 @@ function renderSummary(dataFiltrada) {
   const cont = document.getElementById("filterSummary");
   if (!cont) return;
   const s = resumen(dataFiltrada);
+  const total = store.data.length;
+  const filtrado = total > 0 && s.registros !== total;
   cont.innerHTML =
     `<strong>${s.registros}</strong> registro(s) · <strong>${s.personasUnicas}</strong> persona(s) única(s) · ` +
-    `<strong>${s.grupos}</strong> grupo(s) · <strong>${s.cursos}</strong> curso(s)`;
+    `<strong>${s.grupos}</strong> grupo(s) · <strong>${s.cursos}</strong> curso(s) · ` +
+    `<strong>${s.pctAsistencia}%</strong> asistencia` +
+    (filtrado ? ` <span class="filter-summary-badge">de ${total} en total</span>` : "");
 }
 
 function sincronizarControles(s) {
   const f = s.filtros;
   Object.entries(CLAVES_NORMALIZADA).forEach(([id, clave]) => {
     const el = document.getElementById(id);
-    if (el && document.activeElement !== el && el.type !== "date") {
-      // El input de búsqueda también se evita para no interrumpir tipeo.
-      if (id === "searchInput") { el.value = f.busqueda; return; }
-      el.value = f[clave] ?? (clave === "semestre" ? "todos" : "");
-    } else if (el && el.type === "date") {
-      el.value = f[clave] ?? "";
-    }
+    if (!el) return;
+    if (el.type === "date") { el.value = f[clave] ?? ""; return; }
+    if (document.activeElement === el) return; // no interrumpir tipeo/select en uso
+    if (id === "searchInput") { el.value = f.busqueda; return; }
+    el.value = f[clave] ?? (clave === "semestre" ? "todos" : "");
   });
+  // Select de integridad (combina soloDuplicados / soloRevision).
+  const selInt = document.getElementById("filtroIntegridad");
+  if (selInt) {
+    selInt.value = f.soloDuplicados ? "duplicados" : (f.soloRevision ? "revision" : "");
+  }
 }
 
 function escapeAttr(str) {
